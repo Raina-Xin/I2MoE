@@ -1,0 +1,758 @@
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from itertools import combinations
+from torchvision import models as tmodels
+import math
+
+
+class MultiLayerCNNEncoder(nn.Module):
+    def __init__(self, input_dim, hidden_dim, num_layers=3, reduction_factor=2):
+        """
+        Multi-layer CNN encoder with stacked 1D convolutions and fully connected layers.
+
+        Args:
+        - input_dim (int): Input dimension (e.g., 2000 for the input vector size).
+        - hidden_dim (int): Final hidden representation size (e.g., 128).
+        - num_layers (int): Number of convolutional layers.
+        - reduction_factor (int): Factor by which the dimension is reduced in each layer.
+        """
+        super(MultiLayerCNNEncoder, self).__init__()
+        self.num_layers = num_layers
+
+        # Compute the size after all convolutions
+        reduced_dim = input_dim // (reduction_factor**num_layers)
+
+        # Stacked convolutional layers
+        layers = []
+        in_channels = 1  # Single channel input
+        out_channels = 16  # Starting number of channels
+        for i in range(num_layers):
+            layers.append(
+                nn.Conv1d(
+                    in_channels=in_channels,
+                    out_channels=out_channels,
+                    kernel_size=3,
+                    stride=2,
+                    padding=1,
+                )
+            )
+            layers.append(nn.ReLU())
+            in_channels = out_channels
+            out_channels *= 2  # Double the channels after each layer
+
+        self.conv_layers = nn.Sequential(*layers)
+
+        # Fully connected layers
+        self.fc = nn.Sequential(
+            nn.Linear(reduced_dim * in_channels, 256),  # Hidden layer
+            nn.ReLU(),
+            nn.Linear(256, hidden_dim),  # Output layer
+        )
+
+    def forward(self, x):
+        x = x.unsqueeze(1)  # Add channel dimension
+        x = self.conv_layers(x)
+        x = x.view(x.size(0), -1)  # Flatten
+        x = self.fc(x)
+        return x
+
+
+class VGG11Slim(nn.Module):
+    """Extends VGG11 with a fewer layers in the classifier.
+
+    Slimmer version of vgg11 model with fewer layers in classifier.
+    """
+
+    def __init__(
+        self, hiddim, dropout=True, dropoutp=0.2, pretrained=True, freeze_features=True
+    ):
+        """Initialize VGG11Slim Object.
+
+        Args:
+            hiddim (int): Hidden dimension size
+            dropout (bool, optional): Whether to apply dropout to output of ReLU. Defaults to True.
+            dropoutp (float, optional): Dropout probability. Defaults to 0.2.
+            pretrained (bool, optional): Whether to instantiate VGG11 from Pretrained. Defaults to True.
+            freeze_features (bool, optional): Whether to keep VGG11 features frozen. Defaults to True.
+        """
+        super(VGG11Slim, self).__init__()
+        self.hiddim = hiddim
+        self.model = tmodels.vgg11_bn(pretrained=pretrained)
+        self.model.classifier = nn.Linear(512 * 7 * 7, hiddim)
+        if dropout:
+            feats_list = list(self.model.features)
+            new_feats_list = []
+            for feat in feats_list:
+                new_feats_list.append(feat)
+                if isinstance(feat, nn.ReLU):
+                    new_feats_list.append(nn.Dropout(p=dropoutp))
+
+            self.model.features = nn.Sequential(*new_feats_list)
+        for p in self.model.features.parameters():
+            p.requires_grad = not freeze_features
+
+    def forward(self, x):
+        """Apply VGG11Slim to Layer Input.
+
+        Args:
+            x (torch.Tensor): Layer Input
+
+        Returns:
+            torch.Tensor: Layer Output
+        """
+        return self.model(x)
+
+
+class MLP(nn.Module):
+    def __init__(
+        self,
+        input_dim,
+        hidden_dim,
+        output_dim,
+        num_layers,
+        activation=nn.ReLU(),
+        dropout=0.5,
+    ):
+        super(MLP, self).__init__()
+        layers = []
+        self.drop = nn.Dropout(dropout)
+        if num_layers == 1:
+            layers.append(nn.Linear(input_dim, output_dim))
+        else:
+            layers.append(nn.Linear(input_dim, hidden_dim))
+            layers.append(activation)
+            layers.append(self.drop)
+            for _ in range(num_layers - 2):
+                layers.append(nn.Linear(hidden_dim, hidden_dim))
+                layers.append(activation)
+                layers.append(self.drop)
+            layers.append(nn.Linear(hidden_dim, output_dim))
+        self.network = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.network(x)
+
+
+class Custom3DCNN(nn.Module):
+    # Architecture provided by: End-To-End Alzheimer's Disease Diagnosis and Biomarker Identification
+    def __init__(self, hidden_dim=128):
+        super(Custom3DCNN, self).__init__()
+        self.conv1 = nn.Conv3d(1, 32, kernel_size=(3, 3, 3), stride=1, padding=1)
+        self.conv2 = nn.Conv3d(32, 32, kernel_size=(3, 3, 3), stride=1, padding=1)
+        self.pool1 = nn.MaxPool3d(kernel_size=(2, 2, 2), stride=2)
+        self.dropout1 = nn.Dropout3d(0.2)
+
+        self.conv3 = nn.Conv3d(32, 64, kernel_size=(3, 3, 3), stride=1, padding=1)
+        self.conv4 = nn.Conv3d(64, 64, kernel_size=(3, 3, 3), stride=1, padding=1)
+        self.pool2 = nn.MaxPool3d(kernel_size=(3, 3, 3), stride=3)
+        self.dropout2 = nn.Dropout3d(0.2)
+
+        self.conv5 = nn.Conv3d(64, 128, kernel_size=(3, 3, 3), stride=1, padding=1)
+        self.conv6 = nn.Conv3d(
+            128, hidden_dim, kernel_size=(3, 3, 3), stride=1, padding=1
+        )
+        self.pool3 = nn.MaxPool3d(kernel_size=(4, 4, 4))
+        self.dropout3 = nn.Dropout3d(0.2)
+
+        # Flatten the output and add a fully connected layer to reduce to hidden_dim
+        self.fc = nn.Linear(hidden_dim * 3 * 3 * 4, hidden_dim)
+
+        # self.fc1 = nn.Linear(128*6*6, 512)
+        # self.fc2 = nn.Linear(512, 256)
+        # self.fc3 = nn.Linear(256, num_classes)
+        # self.dropout = nn.Dropout(0.2)
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = self.dropout1(self.pool1(x))
+
+        x = F.relu(self.conv3(x))
+        x = F.relu(self.conv4(x))
+        x = self.dropout2(self.pool2(x))
+
+        x = F.relu(self.conv5(x))
+        x = F.relu(self.conv6(x))
+        x = self.dropout3(self.pool3(x))
+
+        x = x.view(x.size(0), -1)  # Flatten the output
+        x = self.fc(x)  # Apply the fully connected layer
+
+        # x = x.view(x.size(0), -1)
+        # x = F.relu(self.fc1(x))
+        # x = self.dropout(x)
+        # x = F.relu(self.fc2(x))
+        # x = self.dropout(x)
+        # x = self.fc3(x)
+
+        return x
+
+
+class FusionMLP(nn.Module):
+    def __init__(self, total_input_dim, hidden_dim, output_dim, num_layers):
+        super(FusionMLP, self).__init__()
+        layers = []
+        layers.append(nn.Linear(total_input_dim, hidden_dim))
+        layers.append(nn.ReLU())
+        for _ in range(num_layers - 1):
+            layers.append(nn.Linear(hidden_dim, hidden_dim))
+            layers.append(nn.ReLU())
+        layers.append(nn.Linear(hidden_dim, output_dim))
+        self.network = nn.Sequential(*layers)
+
+    def forward(self, *inputs):
+        x = torch.cat(inputs, dim=1)
+        return self.network(x)
+
+
+class PatchEmbeddings(nn.Module):
+    """
+    Image to Patch Embedding.
+
+    """
+
+    def __init__(self, feature_size, num_patches, embed_dim, dropout=0.25):
+        super().__init__()
+        patch_size = math.ceil(feature_size / num_patches)
+        pad_size = num_patches * patch_size - feature_size
+        self.pad_size = pad_size
+        self.num_patches = num_patches
+        self.feature_size = feature_size
+        self.patch_size = patch_size
+        self.projection = nn.Linear(patch_size, embed_dim)
+
+    def forward(self, x):
+        x = F.pad(x, (0, self.pad_size)).view(
+            x.shape[0], self.num_patches, self.patch_size
+        )
+        # x = F.normalize(x, dim=-1)
+        x = self.projection(x)
+        return x
+
+
+class TransformerEncoderLayer(nn.Module):
+    def __init__(
+        self,
+        num_experts,
+        num_routers,
+        d_model,
+        num_head,
+        dropout=0.1,
+        activation=nn.GELU,
+        hidden_times=2,
+        mlp_sparse=False,
+        self_attn=True,
+        top_k=2,
+        **kwargs
+    ) -> None:
+        super(TransformerEncoderLayer, self).__init__()
+
+        self.dropout = nn.Dropout(dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.activation = activation()
+        self.attn = Attention(
+            d_model,
+            num_heads=num_head,
+            qkv_bias=False,
+            attn_drop=dropout,
+            proj_drop=dropout,
+        )
+
+        self.mlp_sparse = mlp_sparse
+        self.self_attn = self_attn
+
+        if self.mlp_sparse:
+            self.mlp = FMoETransformerMLP(
+                num_expert=num_experts,
+                n_router=num_routers,
+                d_model=d_model,
+                d_hidden=d_model * hidden_times,
+                activation=nn.GELU(),
+                top_k=top_k,
+                **kwargs
+            )
+        else:
+            self.mlp = MLP(
+                input_dim=d_model,
+                hidden_dim=d_model * hidden_times,
+                output_dim=d_model,
+                num_layers=2,
+                activation=nn.GELU(),
+                dropout=dropout,
+            )
+
+    def forward(self, x, expert_index=None):
+        if self.self_attn:
+            if expert_index:
+                x = self.attn(x, x)
+                x = x + self.dropout1(x)
+                x = self.mlp(self.norm2(x), expert_index)
+                return x
+
+            else:
+                chunk_size = [item.shape[1] for item in x]
+                x = self.norm1(torch.cat(x, dim=1))
+                kv = x
+                x = self.attn(x, kv)
+                x = x + self.dropout1(x)
+                x = torch.split(x, chunk_size, dim=1)
+                x = [item for item in x]
+
+                if self.mlp_sparse:
+                    for i in range(len(chunk_size)):
+                        x[i] = x[i] + self.dropout2(
+                            self.mlp(self.norm2(x[i]), expert_index)
+                        )
+                else:
+                    for i in range(len(chunk_size)):
+                        x[i] = x[i] + self.dropout2(self.mlp(self.norm2(x[i])))
+        else:
+            chunk_size = [item.shape[1] for item in x]
+            x = [item for item in x]
+            for i in range(len(chunk_size)):
+                other_m = [x[j] for j in range(len(chunk_size)) if j != i]
+                other_m = torch.cat([x[i], *other_m], dim=1)
+                x[i] = self.attn(x[i], other_m)
+            x = [x[i] + self.dropout1(x[i]) for i in range(len(chunk_size))]
+            if self.mlp_sparse:
+                for i in range(len(chunk_size)):
+                    x[i] = x[i] + self.dropout2(
+                        self.mlp(self.norm2(x[i]), expert_index)
+                    )
+            else:
+                for i in range(len(chunk_size)):
+                    x[i] = x[i] + self.dropout2(self.mlp(self.norm2(x[i])))
+        return x
+
+
+class Attention(nn.Module):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0.0, proj_drop=0.0):
+        super().__init__()
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = head_dim**-0.5
+        self.head_dim = head_dim
+        self.q = nn.Linear(dim, dim, bias=qkv_bias)
+        self.kv = nn.Linear(dim, dim * 2, bias=qkv_bias)
+        # self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(head_dim * self.num_heads, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+    def forward(self, x, kv, attn_mask=None):
+        # attn_mask: (B, N+1, N+1) input-dependent
+        eps = 1e-6
+
+        Bx, Nx, Cx = x.shape
+        B, N, C = kv.shape
+        q = self.q(x).reshape(Bx, Nx, self.num_heads, Cx // self.num_heads)
+        q = q.permute(0, 2, 1, 3)
+        kv = self.kv(kv)
+        kv = kv.reshape(B, N, 2, self.num_heads, C // self.num_heads)
+        kv = kv.permute(2, 0, 3, 1, 4)
+        k, v = kv.unbind(0)
+
+        attn = (
+            q @ k.transpose(-2, -1)
+        ) * self.scale  # (B, H, N+1, C/H) @ (B, H, C/H, N+1) -> (B, H, N+1, N+1)
+
+        attn = attn.softmax(dim=-1)
+
+        attn = self.attn_drop(attn)
+        x = attn @ v
+
+        x = x.transpose(1, 2).reshape(
+            Bx, Nx, -1
+        )  # (B, H, N+1, N+1) * (B, H, N+1, C/H) -> (B, H, N+1, C/H) -> (B, N+1, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+
+        return x
+
+
+class GRU(torch.nn.Module):
+    """Implements Gated Recurrent Unit (GRU)."""
+
+    def __init__(
+        self,
+        indim,
+        hiddim,
+        dropout=False,
+        dropoutp=0.1,
+        flatten=False,
+        has_padding=False,
+        last_only=False,
+        batch_first=True,
+    ):
+        """Initialize GRU Module.
+
+        Args:
+            indim (int): Input dimension
+            hiddim (int): Hidden dimension
+            dropout (bool, optional): Whether to apply dropout layer or not. Defaults to False.
+            dropoutp (float, optional): Dropout probability. Defaults to 0.1.
+            flatten (bool, optional): Whether to flatten output before returning. Defaults to False.
+            has_padding (bool, optional): Whether the input has padding or not. Defaults to False.
+            last_only (bool, optional): Whether to return only the last output of the GRU. Defaults to False.
+            batch_first (bool, optional): Whether to batch before applying or not. Defaults to True.
+        """
+        super(GRU, self).__init__()
+        self.gru = nn.GRU(indim, hiddim, batch_first=True)
+        self.dropout = dropout
+        self.dropout_layer = torch.nn.Dropout(dropoutp)
+        self.flatten = flatten
+        self.has_padding = has_padding
+        self.last_only = last_only
+        self.batch_first = batch_first
+
+    def forward(self, x):
+        """Apply GRU to input.
+
+        Args:
+            x (torch.Tensor): Layer Input
+
+        Returns:
+            torch.Tensor: Layer Output
+        """
+        if self.has_padding:
+            x = pack_padded_sequence(
+                x[0], x[1], batch_first=self.batch_first, enforce_sorted=False
+            )
+            out = self.gru(x)[1][-1]
+        elif self.last_only:
+            out = self.gru(x)[1][0]
+
+            return out
+        else:
+            out, l = self.gru(x)
+        if self.dropout:
+            out = self.dropout_layer(out)
+        if self.flatten:
+            out = torch.flatten(out, 1)
+
+        return out
+
+
+class Linear(torch.nn.Module):
+    """Linear Layer with Xavier Initialization, and 0 Bias."""
+
+    def __init__(self, indim, outdim, xavier_init=False):
+        """Initialize Linear Layer w/ Xavier Init.
+
+        Args:
+            indim (int): Input Dimension
+            outdim (int): Output Dimension
+            xavier_init (bool, optional): Whether to apply Xavier Initialization to Layer. Defaults to False.
+
+        """
+        super(Linear, self).__init__()
+        self.fc = nn.Linear(indim, outdim)
+        if xavier_init:
+            nn.init.xavier_normal_(self.fc.weight)
+            self.fc.bias.data.fill_(0.0)
+
+    def forward(self, x):
+        """Apply Linear Layer to Input.
+
+        Args:
+            x (torch.Tensor): Input Tensor
+
+        Returns:
+            torch.Tensor: Output Tensor
+
+        """
+        return self.fc(x)
+
+
+"""Implements losses for CCA."""
+
+
+class CCALoss(nn.Module):
+    """Implements Loss for CCA."""
+
+    def __init__(self, outdim_size, use_all_singular_values, device):
+        """Initialize CCALoss Object.
+
+        Args:
+            outdim_size (int): Output Dimension for TopK
+            use_all_singular_values (bool): Whether to include all singular values in the loss.
+            device (torch.device): What device to place this module on. Must agree with model.
+        """
+        super(CCALoss, self).__init__()
+        self.outdim_size = outdim_size
+        self.use_all_singular_values = use_all_singular_values
+        self.device = device
+
+    def forward(self, H1, H2):
+        """Apply the CCALoss as described in the paper to inputs H1 and H2.
+
+        Args:
+            H1 (torch.Tensor): Tensor corresponding to the first random variable in CCA.
+            H2 (torch.Tensor): Tensor corresponding to the second random variable in CCA.
+
+        Returns:
+            torch.Tensor: CCALoss for this pair.
+        """
+        r1 = 1e-3
+        r2 = 1e-3
+        eps = 1e-9
+
+        H1, H2 = H1.t().to(self.device), H2.t().to(self.device)
+
+        assert torch.isnan(H1).sum().item() == 0
+        assert torch.isnan(H2).sum().item() == 0
+
+        o1 = o2 = H1.size(0)
+
+        m = H1.size(1)
+
+        H1bar = H1 - H1.mean(dim=1).unsqueeze(dim=1)
+        H2bar = H2 - H2.mean(dim=1).unsqueeze(dim=1)
+        # assert torch.isnan(H1bar).sum().item() == 0
+        # assert torch.isnan(H2bar).sum().item() == 0
+
+        SigmaHat12 = (1.0 / (m - 1)) * torch.matmul(H1bar, H2bar.t())
+        SigmaHat11 = (1.0 / (m - 1)) * torch.matmul(H1bar, H1bar.t()) + r1 * torch.eye(
+            o1, device=self.device
+        )
+        SigmaHat22 = (1.0 / (m - 1)) * torch.matmul(H2bar, H2bar.t()) + r2 * torch.eye(
+            o2, device=self.device
+        )
+        # assert torch.isnan(SigmaHat11).sum().item() == 0
+        # assert torch.isnan(SigmaHat12).sum().item() == 0
+        # assert torch.isnan(SigmaHat22).sum().item() == 0
+
+        # Calculating the root inverse of covariance matrices by using eigen decomposition
+        [D1, V1] = torch.linalg.eigh(SigmaHat11, UPLO="U")
+        [D2, V2] = torch.linalg.eigh(SigmaHat22, UPLO="U")
+        # assert torch.isnan(D1).sum().item() == 0
+        # assert torch.isnan(D2).sum().item() == 0
+        # assert torch.isnan(V1).sum().item() == 0
+        # assert torch.isnan(V2).sum().item() == 0
+
+        # Added to increase stability
+        posInd1 = torch.gt(D1, eps).nonzero()[:, 0]
+        D1 = D1[posInd1]
+        V1 = V1[:, posInd1]
+        posInd2 = torch.gt(D2, eps).nonzero()[:, 0]
+        D2 = D2[posInd2]
+        V2 = V2[:, posInd2]
+
+        SigmaHat11RootInv = torch.matmul(torch.matmul(V1, torch.diag(D1**-0.5)), V1.t())
+        SigmaHat22RootInv = torch.matmul(torch.matmul(V2, torch.diag(D2**-0.5)), V2.t())
+
+        Tval = torch.matmul(
+            torch.matmul(SigmaHat11RootInv, SigmaHat12), SigmaHat22RootInv
+        )
+
+        if self.use_all_singular_values:
+            # all singular values are used to calculate the correlation
+            tmp = torch.matmul(Tval.t(), Tval)
+            corr = torch.trace(torch.sqrt(tmp))
+            # assert torch.isnan(corr).item() == 0
+        else:
+            # just the top self.outdim_size singular values are used
+            trace_TT = torch.matmul(Tval.t(), Tval)
+            # regularization for more stability
+            trace_TT = torch.add(
+                trace_TT, (torch.eye(trace_TT.shape[0]) * r1).to(self.device)
+            )
+            U, V = torch.linalg.eigh(trace_TT, UPLO="U")
+            U = torch.where(
+                U > eps, U, (torch.ones(U.shape).float() * eps).to(self.device)
+            )
+            U = U.topk(self.outdim_size)[0]
+            corr = torch.sum(torch.sqrt(U))
+
+        return -corr
+
+
+def _criterioning(pred, truth, criterion):
+    """Handle criterion ideosyncracies."""
+    if isinstance(criterion, torch.nn.CrossEntropyLoss):
+        truth = truth.squeeze() if len(truth.shape) == len(pred.shape) else truth
+        return criterion(
+            pred,
+            truth.long().to(
+                torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            ),
+        )
+    if isinstance(
+        criterion,
+        (torch.nn.modules.loss.BCEWithLogitsLoss, torch.nn.MSELoss, torch.nn.L1Loss),
+    ):
+        return criterion(
+            pred,
+            truth.float().to(
+                torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            ),
+        )
+
+
+def CCA_objective(out_dim, cca_weight=0.001, criterion=torch.nn.CrossEntropyLoss()):
+    """
+    Define loss function for CCA.
+
+    :param out_dim: output dimension
+    :param cca_weight: weight of cca loss
+    :param criterion: criterion for supervised loss
+    """
+    lossfunc = CCALoss(out_dim, False, device="cuda")
+
+    def _actualfunc(pred, truth, args):
+        ce_loss = _criterioning(pred, truth, criterion)
+        outs = args["reps"]
+        cca_loss = lossfunc(outs[0], outs[1])
+        return cca_loss * cca_weight + ce_loss
+
+    return _actualfunc
+
+
+class Maxout(nn.Module):
+    """Implements Maxout module."""
+
+    def __init__(self, d, m, k):
+        """Initialize Maxout object.
+
+        Args:
+            d (int): (Unused)
+            m (int): Number of features remeaining after Maxout.
+            k (int): Pool Size
+        """
+        super(Maxout, self).__init__()
+        self.d_in, self.d_out, self.pool_size = d, m, k
+        self.lin = nn.Linear(d, m * k)
+
+    def forward(self, inputs):
+        """Apply Maxout to inputs.
+
+        Args:
+            inputs (torch.Tensor): Layer Input
+
+        Returns:
+            torch.Tensor: Layer Output
+        """
+        shape = list(inputs.size())
+        shape[-1] = self.d_out
+        shape.append(self.pool_size)
+        max_dim = len(shape) - 1
+        out = self.lin(inputs)
+        m, _ = out.view(*shape).max(dim=max_dim)
+        return m
+
+
+class MaxOut_MLP(nn.Module):
+    """Implements Maxout w/ MLP."""
+
+    def __init__(
+        self,
+        num_outputs,
+        first_hidden=64,
+        number_input_feats=300,
+        second_hidden=None,
+        linear_layer=True,
+    ):
+        """Instantiate MaxOut_MLP Module.
+
+        Args:
+            num_outputs (int): Output dimension
+            first_hidden (int, optional): First hidden layer dimension. Defaults to 64.
+            number_input_feats (int, optional): Input dimension. Defaults to 300.
+            second_hidden (_type_, optional): Second hidden layer dimension. Defaults to None.
+            linear_layer (bool, optional): Whether to include an output hidden layer or not. Defaults to True.
+        """
+        super(MaxOut_MLP, self).__init__()
+
+        if second_hidden is None:
+            second_hidden = first_hidden
+        self.op0 = nn.BatchNorm1d(number_input_feats, 1e-4)
+        self.op1 = Maxout(number_input_feats, first_hidden, 2)
+        self.op2 = nn.Sequential(nn.BatchNorm1d(first_hidden), nn.Dropout(0.3))
+        # self.op2 = nn.BatchNorm1d(first_hidden)
+        # self.op3 = Maxout(first_hidden, first_hidden * 2, 5)
+        self.op3 = Maxout(first_hidden, second_hidden, 2)
+        self.op4 = nn.Sequential(nn.BatchNorm1d(second_hidden), nn.Dropout(0.3))
+        # self.op4 = nn.BatchNorm1d(second_hidden)
+
+        # The linear layer that maps from hidden state space to output space
+        if linear_layer:
+            self.hid2val = nn.Linear(second_hidden, num_outputs)
+        else:
+            self.hid2val = None
+
+    def forward(self, x):
+        """Apply module to layer input
+
+        Args:
+            x (torch.Tensor): Layer Input
+
+        Returns:
+            torch.Tensor: Layer Output
+        """
+        o0 = self.op0(x)
+        o1 = self.op1(o0)
+        o2 = self.op2(o1)
+        o3 = self.op3(o2)
+        o4 = self.op4(o3)
+        if self.hid2val is None:
+            return o4
+        o5 = self.hid2val(o4)
+
+        return o5
+
+
+# class WeightedAverageMLP(nn.Module):
+#     def __init__(
+#         self,
+#         num_modalities,
+#         hidden_dim,
+#         num_layers_weight_mlp=2,
+#         temperature=10,
+#         patch=False,
+#     ):
+#         super(WeightedAverageMLP, self).__init__()
+#         self.temperature = temperature
+#         self.patch = patch
+#         self.mlp = MLP(
+#             hidden_dim * num_modalities,
+#             hidden_dim,
+#             4,
+#             num_layers_weight_mlp,
+#             activation=nn.ReLU(),
+#             dropout=0.5,
+#         )
+
+#     def temperature_scaled_softmax(self, logits):
+#         logits = logits / self.temperature
+#         return torch.softmax(logits, dim=1)
+
+#     def forward(self, inputs):
+#         if self.patch:
+#             x = [item.mean(dim=1) for item in inputs]
+#             x = torch.cat(x, dim=1)
+#         else:
+#             x = torch.cat(inputs, dim=1)
+#         x = self.mlp(x)
+#         return self.temperature_scaled_softmax(x)
+
+
+# class WeightedAverageSimple(nn.Module):
+#     def __init__(self, num_logits=4):
+#         super(WeightedAverageSimple, self).__init__()
+#         self.weights = nn.Parameter(
+#             torch.ones(num_logits) / num_logits
+#         )  # Initialize weights
+#         self.softmax = nn.Softmax(dim=0)
+
+#     def forward(self, logits):
+#         normalized_weights = self.softmax(self.weights)
+#         normalized_weights = normalized_weights.unsqueeze(0).unsqueeze(-1)
+#         weighted_average = torch.sum(
+#             logits * normalized_weights, dim=1
+#         )  # Weighted average along the logit dimension
+#         return weighted_average
