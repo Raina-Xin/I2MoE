@@ -18,7 +18,7 @@ source scripts/train_scripts/imoe/<fusion>/run_<dataset>.sh
 
 ### Train vanilla fusion models
 
-- Supported fusion methods: `<fusion>` in `transformer`, `interpretcc`, `moepp`, `switchgate` and other fusion (`flexmoe`, `lrtf`, `m3care`, `shaspec`).
+- Supported fusion methods: `<fusion>` in `transformer`, `interpretcc`, `moepp`, `switchgate` and other fusion (`ef`, `lf`, `flexmoe`, `lrtf`, `m3care`, `shaspec`).
 - Supported datasets:`<dataset>` in `adni`, `mimic`, `mmimdb`, `mosi_regression`, `enrico`.
 
 ```
