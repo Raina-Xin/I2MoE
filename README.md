@@ -32,7 +32,6 @@ Create data directory under `./data`
 1. Add preprocessing code of your new dataset under `src/common/datasets/<your_dataset>.py`
 2. If appropriate, add customized dataloader of your new dataset to `src/common/datasets/MultiModalDataset.py`
 
-Example
 ```python
     elif dataset == "<your_dataset>":
         # if False:
