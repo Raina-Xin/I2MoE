@@ -12,7 +12,7 @@ Modality fusion is a cornerstone of multimodal learning, enabling information in
 
 
 ## Environment Setup
-```
+```shell
 conda create -n i2moe python=3.10 -y
 conda activate i2moe
 pip install -r requirements.txt
@@ -22,6 +22,46 @@ pip install -r requirements.txt
 
 Create data directory under `./data`
 
+### Reproduce experimemnt results
+
+- `adni` dataset: follow [Readme](https://github.com/UNITES-Lab/Flex-MoE/blob/main/data/adni/README.md) from [Flex-MoE](https://github.com/UNITES-Lab/Flex-MoE/).
+- `mimic` dataset: download MIMIC-IV v3.1 from [PhysioNet](https://physionet.org/) and follow preprocessing procedure in Appendix E.4.
+- `mmimdb`, `mosi`, and `mmimdb` datasets: download datasets following links in [MultiBench](https://arxiv.org/abs/2107.07502).
+
+### Add new datasets
+1. Add preprocessing code of your new dataset under `src/common/datasets/<your_dataset>.py`
+2. If appropriate, add customized dataloader of your new dataset to `src/common/datasets/MultiModalDataset.py`
+
+Example
+```python
+    elif dataset == "<your_dataset>":
+        # if False:
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            collate_fn=collate_fn_<your_dataset>,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+        val_loader = DataLoader(
+            valid_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            collate_fn=collate_fn_<your_dataset>,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            collate_fn=collate_fn_<your_dataset>_test,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+```
+
 ## Train Models
 
 ### Train I<sup>2</sup>MoE models
@@ -29,7 +69,7 @@ Create data directory under `./data`
 - Supported fusion methods: `<fusion>` in `transformer`, `interpretcc`, `moepp`, `switchgate`.
 - Supported datasets:`<dataset>` in `adni`, `mimic`, `mmimdb`, `mosi_regression`, `enrico`.
 
-```
+```shell
 source scripts/train_scripts/imoe/<fusion>/run_<dataset>.sh
 ```
 
@@ -38,7 +78,7 @@ source scripts/train_scripts/imoe/<fusion>/run_<dataset>.sh
 - Supported fusion methods: `<fusion>` in `transformer`, `interpretcc`, `moepp`, `switchgate` and other fusion (`ef`, `lf`, `lrtf`).
 - Supported datasets:`<dataset>` in `adni`, `mimic`, `mmimdb`, `mosi_regression`, `enrico`.
 
-```
+```shell
 # For <fusion> in ["transformer", "interpretcc", "moepp", "switchgate"]
 source scripts/train_scripts/baseline/<fusion>/run_<dataset>.sh
 # For <fusion> in ["ef", "lrtf", "lf"]
@@ -50,7 +90,7 @@ source scripts/train_scripts/baseline/other_fusion/run_<dataset>.sh
 
 - Supported datasets:`<dataset>` in `adni`, `mimic`, `mmimdb`, `mosi_regression`, `enrico`.
 
-```
+```shell
 source scripts/train_scripts/latent_contrastive/transformer/run_<dataset>.sh
 source scripts/train_scripts/less_perturbed_forward/transformer/run_<dataset>.sh
 source scripts/train_scripts/synergy_redundancy_only/transformer/run_<dataset>.sh
