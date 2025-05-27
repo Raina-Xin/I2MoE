@@ -4,7 +4,7 @@
 Official implementation for "I<sup>2</sup>MoE: Interpretable Multimodal Interaction-aware Mixture-of-Experts" accepted by ICML 2025 (Poster).  
 
 - Authors: [Jiayi Xin](https://www.linkedin.com/in/jiayi-xin-978511334/), [Sukwon Yun](https://sukwonyun.github.io/), [Jie Peng](https://openreview.net/profile?id=~Jie_Peng4), [Inyoung Choi](https://www.linkedin.com/in/inyoung-choi-77105221b/), [Jenna Ballard](https://www.linkedin.com/in/jenna-ballard-81b7b3168/), [Tianlong Chen](https://tianlong-chen.github.io/) and [Qi Long](https://www.med.upenn.edu/long-lab/currentgroupmembers.html)
-- Paper Link: TBU
+- Paper Link: https://arxiv.org/abs/2505.19190
 
 ## Overview
 Modality fusion is a cornerstone of multimodal learning, enabling information integration from diverse data sources. However, vanilla fusion methods are limited by **(1)** inability to account for heterogeneous interactions between modalities and **(2)** lack of interpretability in uncovering the multimodal interactions inherent in the data. To this end, we propose **I²MoE** (**I**nterpretable Multimodal **I**nteraction-aware **M**ixture **o**f **E**xperts), an end-to-end MoE framework designed to enhance modality fusion by explicitly modeling diverse multimodal interactions, as well as providing interpretation on a local and global level. First, I<sup>2</sup>MoE utilizes different interaction experts with weakly supervised interaction losses to learn multimodal interactions in a data-driven way. Second, I<sup>2</sup>MoE deploys a reweighting model that assigns importance scores for the output of each interaction expert, which offers sample-level and dataset-level interpretation. Extensive evaluation of medical and general multimodal datasets shows that I<sup>2</sup>MoE is flexible enough to be combined with different fusion techniques, consistently improves task performance, and provides interpretation across various real-world scenarios.
@@ -27,7 +27,7 @@ Create data directory under `./data`
 
 - `adni` dataset: follow [Readme](https://github.com/UNITES-Lab/Flex-MoE/blob/main/data/adni/README.md) from [Flex-MoE](https://github.com/UNITES-Lab/Flex-MoE/).
 - `mimic` dataset: download MIMIC-IV v3.1 from [PhysioNet](https://physionet.org/) and follow preprocessing procedure in Appendix E.4.
-- `mmimdb`, `mosi`, and `mmimdb` datasets: download datasets following links in [MultiBench](https://arxiv.org/abs/2107.07502).
+- `mmimdb`, `mosi`, and `enrico` datasets: download datasets following links in [MultiBench](https://arxiv.org/abs/2107.07502).
 
 ### Add new datasets
 1. Add preprocessing code of your new dataset under `src/common/datasets/<your_dataset>.py`
@@ -97,3 +97,6 @@ source scripts/train_scripts/synergy_redundancy_only/transformer/run_<dataset>.s
 source scripts/train_scripts/simple_weighted_average/transformer/run_<dataset>.sh
 source scripts/train_scripts/no_interaction_loss/transformer/run_<dataset>.sh
 ```
+
+## Citation
+TBU
