@@ -99,4 +99,11 @@ source scripts/train_scripts/no_interaction_loss/transformer/run_<dataset>.sh
 ```
 
 ## Citation
-TBU
+```
+@article{xin2025i2moe,
+  title={I2MoE: Interpretable Multimodal Interaction-aware Mixture-of-Experts},
+  author={Xin, Jiayi and Yun, Sukwon and Peng, Jie and Choi, Inyoung and Ballard, Jenna L and Chen, Tianlong and Long, Qi},
+  journal={arXiv preprint arXiv:2505.19190},
+  year={2025}
+}
+```
